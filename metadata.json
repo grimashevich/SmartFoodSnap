@@ -1,0 +1,8 @@
+{
+  "name": "NutriScan AI",
+  "description": "Умный анализатор еды на базе Gemini. Загрузите фото, получите расчет КБЖУ и корректируйте данные голосом.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
