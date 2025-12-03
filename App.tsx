@@ -57,30 +57,86 @@ const App: React.FC = () => {
     };
   }, [appState, resetApp]);
 
+  // Utility to resize image
+  const resizeImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        img.src = e.target?.result as string;
+      };
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const maxDim = 1024; // Limit max dimension to 1024px
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        // Compress to JPEG 0.7 quality
+        resolve(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Helper to translate technical errors to user-friendly messages
+  const getUserFriendlyError = (error: any): string => {
+    const msg = (error?.message || '').toLowerCase();
+    
+    // Check for rate limits (429) or quota issues
+    if (msg.includes('429') || msg.includes('quota') || msg.includes('resource_exhausted')) {
+      return "Превышено количество запросов. Пожалуйста, повторите попытку позже.";
+    }
+    
+    // Check for server overload (503)
+    if (msg.includes('503') || msg.includes('overloaded')) {
+      return "Сервер временно перегружен. Повторите попытку через минуту.";
+    }
+
+    // Check for API Key issues
+    if (msg.includes('api key')) {
+      return "Ошибка конфигурации сервиса. Обратитесь к администратору.";
+    }
+
+    // Default fallback
+    return "Произошла ошибка при обработке данных. Попробуйте еще раз.";
+  };
+
   const handleImageSelect = async (file: File) => {
     setAppState(AppState.ANALYZING_IMAGE);
-    setLoadingMessage('Изучаю фото и распознаю продукты...');
+    setLoadingMessage('Сжимаю и анализирую фото...');
     setErrorMessage(null);
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64String = reader.result as string;
-      setSelectedImage(base64String);
+    try {
+      const resizedBase64 = await resizeImage(file);
+      setSelectedImage(resizedBase64);
 
       // Extract base64 data without prefix for Gemini
-      const base64Data = base64String.split(',')[1];
-      const mimeType = file.type;
+      const base64Data = resizedBase64.split(',')[1];
+      const mimeType = 'image/jpeg'; // We converted to jpeg in resizeImage
 
-      try {
-        const result = await analyzeFoodImage(base64Data, mimeType);
-        setAnalysisResult(result);
-        setAppState(AppState.RESULT_VIEW);
-      } catch (error: any) {
-        setErrorMessage(error.message || "Не удалось проанализировать изображение. Попробуйте другое фото.");
-        setAppState(AppState.ERROR);
-      }
-    };
-    reader.readAsDataURL(file);
+      const result = await analyzeFoodImage(base64Data, mimeType);
+      setAnalysisResult(result);
+      setAppState(AppState.RESULT_VIEW);
+    } catch (error: any) {
+      console.error("Image processing error:", error);
+      setErrorMessage(getUserFriendlyError(error));
+      setAppState(AppState.ERROR);
+    }
   };
 
   const handleCorrectionSubmit = async () => {
@@ -95,7 +151,7 @@ const App: React.FC = () => {
       setCorrectionText('');
       setAppState(AppState.RESULT_VIEW);
     } catch (error: any) {
-      setErrorMessage(error.message || "Не удалось пересчитать данные. Попробуйте еще раз.");
+      setErrorMessage(getUserFriendlyError(error));
       setAppState(AppState.RESULT_VIEW); // Go back to view even on error
     }
   };
@@ -110,7 +166,7 @@ const App: React.FC = () => {
       // Automatically return to result view to let user confirm/edit text
       setAppState(AppState.RESULT_VIEW);
     } catch (error: any) {
-      setErrorMessage(error.message || "Не удалось распознать речь.");
+      setErrorMessage(getUserFriendlyError(error));
       setAppState(AppState.RESULT_VIEW);
     }
   };
@@ -173,7 +229,7 @@ const App: React.FC = () => {
              )}
             <div className="text-center space-y-2">
               <h2 className={`text-2xl font-bold ${textMainClass}`}>Что у нас на тарелке?</h2>
-              <p className={textSubClass}>Загрузите фото еды, чтобы узнать калорийность и состав.</p>
+              <p className={textSubClass}>Загрузите фото еды, чтобы узнать калорийность и баланс макронутриентов.</p>
             </div>
             <CameraCapture onImageSelected={handleImageSelect} />
             
@@ -239,7 +295,6 @@ const App: React.FC = () => {
                   <div className="bg-white p-6 rounded-2xl shadow-xl flex flex-col items-center animate-in zoom-in duration-200">
                     <Loader2 className="w-10 h-10 text-green-500 animate-spin mb-4" />
                     <p className="text-gray-800 font-medium text-center">{loadingMessage}</p>
-                    <p className="text-xs text-gray-400 mt-2">Использую Thinking Mode</p>
                   </div>
                </div>
             )}

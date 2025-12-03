@@ -47,48 +47,62 @@ const analysisResponseSchema: Schema = {
 };
 
 /**
- * Analyzes an image to identify food and macros using Gemini 3 Pro Preview.
- * Note: Google Search is disabled here to ensure strict JSON schema compliance.
+ * Helper to retry functions with exponential backoff on 429/503 errors
+ */
+async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
+  try {
+    return await fn();
+  } catch (error: any) {
+    if (retries > 0 && (error.status === 429 || error.status === 503 || error.message?.includes('429'))) {
+      console.warn(`Request failed with ${error.status || '429'}. Retrying in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return retryWithBackoff(fn, retries - 1, delay * 2);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Analyzes an image to identify food and macros using Gemini 2.5 Flash.
+ * Flash is used for higher rate limits and speed.
  */
 export const analyzeFoodImage = async (base64Image: string, mimeType: string): Promise<AnalysisResult> => {
   if (!apiKey) {
     throw new Error("API Key is missing in the application configuration.");
   }
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              data: base64Image,
-              mimeType: mimeType,
+  return retryWithBackoff(async () => {
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash", // Switched to Flash for better stability and rate limits
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                data: base64Image,
+                mimeType: mimeType,
+              },
             },
-          },
-          {
-            text: "Проанализируй это изображение еды. Определи каждое блюдо или ингредиент, оцени их вес в граммах и рассчитай КБЖУ (Калории, Белки, Жиры, Углеводы). Укажи степень уверенности (confidence) для каждого продукта от 0.0 до 1.0. Будь максимально точным. Верни результат в формате JSON. Используй русский язык для названий и описания.",
-          },
-        ],
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: analysisResponseSchema,
-        // REMOVED: tools: [{ googleSearch: {} }] 
-        // Reason: 'googleSearch' tool is incompatible with 'responseSchema' in the current API version.
-        // We prioritize structured JSON data for this feature.
-      },
-    });
+            {
+              text: "Проанализируй это изображение еды. Определи каждое блюдо или ингредиент, оцени их вес в граммах и рассчитай КБЖУ (Калории, Белки, Жиры, Углеводы). Укажи степень уверенности (confidence) для каждого продукта от 0.0 до 1.0. Будь максимально точным. Верни результат в формате JSON. Используй русский язык для названий и описания.",
+            },
+          ],
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: analysisResponseSchema,
+        },
+      });
 
-    const text = response.text;
-    if (!text) throw new Error("No response from Gemini");
-    
-    return JSON.parse(text) as AnalysisResult;
-  } catch (error: any) {
-    console.error("Analysis failed:", error);
-    // Return a more descriptive error if available
-    throw new Error(error.message || "Failed to analyze image");
-  }
+      const text = response.text;
+      if (!text) throw new Error("No response from Gemini");
+      
+      return JSON.parse(text) as AnalysisResult;
+    } catch (error: any) {
+      console.error("Analysis failed:", error);
+      throw new Error(error.message || "Failed to analyze image");
+    }
+  });
 };
 
 /**
@@ -99,39 +113,41 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
     throw new Error("API Key is missing.");
   }
 
-  try {
-    // Convert Blob to Base64
-    const buffer = await audioBlob.arrayBuffer();
-    const base64Audio = btoa(
-      new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
+  return retryWithBackoff(async () => {
+    try {
+      // Convert Blob to Base64
+      const buffer = await audioBlob.arrayBuffer();
+      const base64Audio = btoa(
+        new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: audioBlob.type, // e.g., 'audio/webm' or 'audio/mp4'
-              data: base64Audio,
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: audioBlob.type, 
+                data: base64Audio,
+              },
             },
-          },
-          {
-            text: "Transcribe this audio strictly verbatim. The audio contains corrections for food analysis in Russian.",
-          },
-        ],
-      },
-    });
+            {
+              text: "Transcribe this audio strictly verbatim. The audio contains corrections for food analysis in Russian.",
+            },
+          ],
+        },
+      });
 
-    return response.text || "";
-  } catch (error: any) {
-    console.error("Transcription failed:", error);
-    throw new Error(error.message || "Transcription failed");
-  }
+      return response.text || "";
+    } catch (error: any) {
+      console.error("Transcription failed:", error);
+      throw new Error(error.message || "Transcription failed");
+    }
+  });
 };
 
 /**
- * Recalculates macros based on user correction (text) using Gemini 3 Pro with Thinking Mode.
+ * Recalculates macros based on user correction (text) using Gemini 2.5 Flash.
  */
 export const recalculateMacros = async (
   currentAnalysis: AnalysisResult,
@@ -141,40 +157,38 @@ export const recalculateMacros = async (
     throw new Error("API Key is missing.");
   }
 
-  try {
-    const prompt = `
-      Исходные данные анализа еды (JSON):
-      ${JSON.stringify(currentAnalysis)}
+  return retryWithBackoff(async () => {
+    try {
+      const prompt = `
+        Исходные данные анализа еды (JSON):
+        ${JSON.stringify(currentAnalysis)}
 
-      Корректировка от пользователя:
-      "${userCorrection}"
+        Корректировка от пользователя:
+        "${userCorrection}"
 
-      Задание:
-      1. Пойми, что именно пользователь хочет изменить (вес, название, удалить блюдо, добавить блюдо).
-      2. Пересчитай КБЖУ для измененных позиций и итоговую сумму.
-      3. Верни обновленный JSON объект в том же формате, включая поле confidence (для новых блюд оцени уверенность сам, для старых оставь или измени если нужно).
-      4. В поле 'summary' напиши, что было изменено.
-    `;
+        Задание:
+        1. Пойми, что именно пользователь хочет изменить (вес, название, удалить блюдо, добавить блюдо).
+        2. Пересчитай КБЖУ для измененных позиций и итоговую сумму.
+        3. Верни обновленный JSON объект в том же формате, включая поле confidence (для новых блюд оцени уверенность сам, для старых оставь или измени если нужно).
+        4. В поле 'summary' напиши, что было изменено.
+      `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: analysisResponseSchema,
-        // Using Thinking Config for complex reasoning about the state change
-        thinkingConfig: {
-          thinkingBudget: 32768, 
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash", // Switched to Flash to avoid 429 on updates
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: analysisResponseSchema,
         },
-      },
-    });
+      });
 
-    const text = response.text;
-    if (!text) throw new Error("No response from Gemini");
+      const text = response.text;
+      if (!text) throw new Error("No response from Gemini");
 
-    return JSON.parse(text) as AnalysisResult;
-  } catch (error: any) {
-    console.error("Recalculation failed:", error);
-    throw new Error(error.message || "Recalculation failed");
-  }
+      return JSON.parse(text) as AnalysisResult;
+    } catch (error: any) {
+      console.error("Recalculation failed:", error);
+      throw new Error(error.message || "Recalculation failed");
+    }
+  });
 };
