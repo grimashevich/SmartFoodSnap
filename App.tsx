@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Send, ChevronRight, Edit3, ArrowLeft, Leaf, Flame, Activity } from 'lucide-react';
+import { Loader2, Send, ChevronRight, Edit3, ArrowLeft, Leaf, Flame, Activity, Camera } from 'lucide-react';
 import CameraCapture from './components/CameraCapture';
 import NutritionChart from './components/NutritionChart';
 import AudioRecorder from './components/AudioRecorder';
@@ -363,6 +363,19 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
+
+             {/* New Scan Action */}
+            <button 
+              onClick={resetApp}
+              className={`w-full mt-6 py-3.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 shadow-sm border active:scale-95 ${
+                 isTelegram 
+                 ? 'bg-[var(--tg-theme-bg-color,white)] text-[var(--tg-theme-text-color,#374151)] border-[var(--tg-theme-hint-color,#e5e7eb)]' 
+                 : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              <Camera className="w-5 h-5" />
+              Сканировать другое блюдо
+            </button>
             
             {/* Spacing for fixed bottom bar */}
             <div className="h-20"></div>
