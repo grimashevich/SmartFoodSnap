@@ -1,7 +1,13 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { AnalysisResult } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Validate API Key immediately
+const apiKey = process.env.API_KEY;
+if (!apiKey) {
+  console.error("API_KEY is missing! Make sure to set it in your environment variables.");
+}
+
+const ai = new GoogleGenAI({ apiKey: apiKey || "dummy-key" });
 
 // Schema for structured output
 const macroSchema: Schema = {
@@ -42,9 +48,13 @@ const analysisResponseSchema: Schema = {
 
 /**
  * Analyzes an image to identify food and macros using Gemini 3 Pro Preview.
- * Uses Google Search Grounding to ensure nutritional accuracy if needed for branded items.
+ * Note: Google Search is disabled here to ensure strict JSON schema compliance.
  */
 export const analyzeFoodImage = async (base64Image: string, mimeType: string): Promise<AnalysisResult> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing in the application configuration.");
+  }
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-pro-preview",
@@ -64,8 +74,9 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
       config: {
         responseMimeType: "application/json",
         responseSchema: analysisResponseSchema,
-        // We add search to help identify specific dishes or nutritional data if the visual is ambiguous but context exists
-        tools: [{ googleSearch: {} }], 
+        // REMOVED: tools: [{ googleSearch: {} }] 
+        // Reason: 'googleSearch' tool is incompatible with 'responseSchema' in the current API version.
+        // We prioritize structured JSON data for this feature.
       },
     });
 
@@ -73,9 +84,10 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
     if (!text) throw new Error("No response from Gemini");
     
     return JSON.parse(text) as AnalysisResult;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Analysis failed:", error);
-    throw error;
+    // Return a more descriptive error if available
+    throw new Error(error.message || "Failed to analyze image");
   }
 };
 
@@ -83,6 +95,10 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
  * Transcribes audio using Gemini 2.5 Flash for fast speech-to-text.
  */
 export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing.");
+  }
+
   try {
     // Convert Blob to Base64
     const buffer = await audioBlob.arrayBuffer();
@@ -108,20 +124,23 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
     });
 
     return response.text || "";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Transcription failed:", error);
-    throw error;
+    throw new Error(error.message || "Transcription failed");
   }
 };
 
 /**
  * Recalculates macros based on user correction (text) using Gemini 3 Pro with Thinking Mode.
- * This handles complex logic like "I didn't eat the bread" or "Add a glass of milk".
  */
 export const recalculateMacros = async (
   currentAnalysis: AnalysisResult,
   userCorrection: string
 ): Promise<AnalysisResult> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing.");
+  }
+
   try {
     const prompt = `
       Исходные данные анализа еды (JSON):
@@ -154,8 +173,8 @@ export const recalculateMacros = async (
     if (!text) throw new Error("No response from Gemini");
 
     return JSON.parse(text) as AnalysisResult;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Recalculation failed:", error);
-    throw error;
+    throw new Error(error.message || "Recalculation failed");
   }
 };

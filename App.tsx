@@ -75,8 +75,8 @@ const App: React.FC = () => {
         const result = await analyzeFoodImage(base64Data, mimeType);
         setAnalysisResult(result);
         setAppState(AppState.RESULT_VIEW);
-      } catch (error) {
-        setErrorMessage("Не удалось проанализировать изображение. Попробуйте другое фото.");
+      } catch (error: any) {
+        setErrorMessage(error.message || "Не удалось проанализировать изображение. Попробуйте другое фото.");
         setAppState(AppState.ERROR);
       }
     };
@@ -94,8 +94,8 @@ const App: React.FC = () => {
       setAnalysisResult(newResult);
       setCorrectionText('');
       setAppState(AppState.RESULT_VIEW);
-    } catch (error) {
-      setErrorMessage("Не удалось пересчитать данные. Попробуйте еще раз.");
+    } catch (error: any) {
+      setErrorMessage(error.message || "Не удалось пересчитать данные. Попробуйте еще раз.");
       setAppState(AppState.RESULT_VIEW); // Go back to view even on error
     }
   };
@@ -109,8 +109,8 @@ const App: React.FC = () => {
       setCorrectionText(transcription);
       // Automatically return to result view to let user confirm/edit text
       setAppState(AppState.RESULT_VIEW);
-    } catch (error) {
-      setErrorMessage("Не удалось распознать речь.");
+    } catch (error: any) {
+      setErrorMessage(error.message || "Не удалось распознать речь.");
       setAppState(AppState.RESULT_VIEW);
     }
   };
@@ -218,7 +218,7 @@ const App: React.FC = () => {
               <span className="text-4xl">😕</span>
             </div>
             <h3 className={`text-lg font-bold ${textMainClass}`}>Упс, что-то пошло не так</h3>
-            <p className={`${textSubClass} max-w-xs`}>{errorMessage}</p>
+            <p className={`${textSubClass} max-w-xs break-words px-4`}>{errorMessage}</p>
             <button 
               onClick={resetApp}
               className="px-6 py-2 bg-gray-800 text-white rounded-lg shadow-lg hover:bg-gray-700 transition"
