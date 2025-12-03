@@ -63,8 +63,8 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, delay = 10
 }
 
 /**
- * Analyzes an image to identify food and macros using Gemini 2.5 Flash.
- * Flash is used for higher rate limits and speed.
+ * Analyzes an image to identify food and macros using Gemini 3 Pro Preview.
+ * Pro model is used for high accuracy in image understanding (reading labels, complex scenes).
  */
 export const analyzeFoodImage = async (base64Image: string, mimeType: string): Promise<AnalysisResult> => {
   if (!apiKey) {
@@ -74,7 +74,7 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
   return retryWithBackoff(async () => {
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash", // Switched to Flash for better stability and rate limits
+        model: "gemini-3-pro-preview", // Switched to Pro for better accuracy (e.g., reading zero sugar labels)
         contents: {
           parts: [
             {
@@ -84,7 +84,7 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
               },
             },
             {
-              text: "Проанализируй это изображение еды. Определи каждое блюдо или ингредиент, оцени их вес в граммах и рассчитай КБЖУ (Калории, Белки, Жиры, Углеводы). Укажи степень уверенности (confidence) для каждого продукта от 0.0 до 1.0. Будь максимально точным. Верни результат в формате JSON. Используй русский язык для названий и описания.",
+              text: "Проанализируй это изображение еды. Если видишь упаковки или этикетки (например, 'Zero Sugar', 'Diet', '0 калорий'), обязательно учитывай это при расчете. Определи каждое блюдо или ингредиент, оцени их вес в граммах и рассчитай КБЖУ (Калории, Белки, Жиры, Углеводы). Укажи степень уверенности (confidence) для каждого продукта от 0.0 до 1.0. Будь максимально точным. Верни результат в формате JSON. Используй русский язык для названий и описания.",
             },
           ],
         },
