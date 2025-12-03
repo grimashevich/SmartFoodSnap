@@ -12,61 +12,81 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onImageSelected }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  
+  // This ref tracks the active stream to ensure we can stop it on unmount/close
+  const activeStreamRef = useRef<MediaStream | null>(null);
 
-  const startCamera = async () => {
-    try {
-      setCameraError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          facingMode: facingMode,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
-      
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+  // Effect to handle Camera Lifecycle
+  useEffect(() => {
+    let mounted = true;
+
+    const initCamera = async () => {
+      // Only initialize if the UI is open
+      if (!isCameraOpen) return;
+
+      try {
+        setCameraError(null);
+        
+        // 1. Get the stream
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { 
+            facingMode: facingMode,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        });
+
+        // 2. Store it for cleanup
+        activeStreamRef.current = stream;
+
+        // 3. Attach to video element (which now exists because isCameraOpen is true)
+        if (mounted && videoRef.current) {
+          videoRef.current.srcObject = stream;
+          // Ensure video plays (sometimes needed on mobile)
+          try {
+            await videoRef.current.play();
+          } catch (e) {
+            console.error("Play error:", e);
+          }
+        } else {
+          // If component unmounted or ref is missing, stop immediately
+          stream.getTracks().forEach(track => track.stop());
+        }
+
+      } catch (err: any) {
+        console.error("Camera access error:", err);
+        if (mounted) {
+          setCameraError("Не удалось открыть камеру. Проверьте разрешения.");
+          // Don't close immediately so user sees the error, but maybe offer retry
+        }
       }
-      setIsCameraOpen(true);
-    } catch (err) {
-      console.error("Camera access error:", err);
-      setCameraError("Не удалось открыть камеру. Проверьте разрешения или используйте загрузку файла.");
-      // If camera fails, fallback to closing the view so user can try upload
-    }
+    };
+
+    initCamera();
+
+    // Cleanup function: runs when facingMode changes, isCameraOpen becomes false, or component unmounts
+    return () => {
+      mounted = false;
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current = null;
+      }
+    };
+  }, [isCameraOpen, facingMode]);
+
+  const openCamera = () => {
+    setIsCameraOpen(true);
   };
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
+  const closeCamera = () => {
     setIsCameraOpen(false);
+    setCameraError(null);
   };
 
   const switchCamera = () => {
-    stopCamera();
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
   };
-
-  // Restart camera when facing mode changes if it was already open (handled by effect dependency on facingMode would be complex with stop/start logic, simple handler is better)
-  useEffect(() => {
-    if (isCameraOpen && !streamRef.current) {
-       startCamera();
-    }
-  }, [facingMode]);
-
-  useEffect(() => {
-    if (isCameraOpen && !streamRef.current) {
-       // Re-trigger start if mode changed via state but stopped
-       startCamera();
-    }
-    return () => {
-      stopCamera(); // Cleanup on unmount
-    };
-  }, [facingMode]);
 
   const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
@@ -86,7 +106,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onImageSelected }) => {
         canvas.toBlob((blob) => {
           if (blob) {
             const file = new File([blob], "camera_capture.jpg", { type: "image/jpeg" });
-            stopCamera();
+            closeCamera();
             onImageSelected(file);
           }
         }, 'image/jpeg', 0.9);
@@ -121,7 +141,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onImageSelected }) => {
           {/* Top Controls */}
           <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start bg-gradient-to-b from-black/50 to-transparent z-10">
              <button 
-               onClick={stopCamera}
+               onClick={closeCamera}
                className="p-2 bg-white/20 backdrop-blur-md rounded-full text-white hover:bg-white/30"
              >
                <X className="w-6 h-6" />
@@ -171,7 +191,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onImageSelected }) => {
       <div className="grid grid-cols-2 gap-3 h-40">
         {/* Camera Button */}
         <button 
-          onClick={startCamera}
+          onClick={openCamera}
           className="flex flex-col items-center justify-center gap-3 bg-blue-500 hover:bg-blue-600 text-white rounded-2xl shadow-md transition-all active:scale-95"
           style={{ backgroundColor: 'var(--tg-theme-button-color, #3b82f6)', color: 'var(--tg-theme-button-text-color, white)' }}
         >
