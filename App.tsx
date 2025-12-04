@@ -99,6 +99,11 @@ const App: React.FC = () => {
   const getUserFriendlyError = (error: any): string => {
     const msg = (error?.message || '').toLowerCase();
     
+    // Check for Permission Denied (403)
+    if (msg.includes('403') || msg.includes('permission_denied')) {
+      return "Ошибка доступа (403). Проверьте, включен ли Gemini API в Google Cloud Console и не заблокирован ли ваш ключ.";
+    }
+
     // Check for rate limits (429) or quota issues
     if (msg.includes('429') || msg.includes('quota') || msg.includes('resource_exhausted')) {
       return "Превышено количество запросов. Пожалуйста, повторите попытку позже.";

@@ -53,6 +53,7 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, delay = 10
   try {
     return await fn();
   } catch (error: any) {
+    // Retry on Rate Limit (429) or Server Overload (503)
     if (retries > 0 && (error.status === 429 || error.status === 503 || error.message?.includes('429'))) {
       console.warn(`Request failed with ${error.status || '429'}. Retrying in ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
@@ -63,44 +64,72 @@ async function retryWithBackoff<T>(fn: () => Promise<T>, retries = 3, delay = 10
 }
 
 /**
- * Analyzes an image to identify food and macros using Gemini 3 Pro Preview.
- * Pro model is used for high accuracy in image understanding (reading labels, complex scenes).
+ * Analyzes an image to identify food and macros.
+ * Tries 'gemini-3-pro-preview' first for accuracy.
+ * Falls back to 'gemini-2.5-flash' if Pro is unavailable (403/404).
  */
 export const analyzeFoodImage = async (base64Image: string, mimeType: string): Promise<AnalysisResult> => {
   if (!apiKey) {
     throw new Error("API Key is missing in the application configuration.");
   }
 
+  const promptText = "Проанализируй это изображение еды. Если видишь упаковки или этикетки (например, 'Zero Sugar', 'Diet', '0 калорий'), обязательно учитывай это при расчете. Определи каждое блюдо или ингредиент, оцени их вес в граммах и рассчитай КБЖУ (Калории, Белки, Жиры, Углеводы). Укажи степень уверенности (confidence) для каждого продукта от 0.0 до 1.0. Будь максимально точным. Верни результат в формате JSON. Используй русский язык для названий и описания.";
+
+  const contentPart = {
+    parts: [
+      {
+        inlineData: {
+          data: base64Image,
+          mimeType: mimeType,
+        },
+      },
+      {
+        text: promptText,
+      },
+    ],
+  };
+
+  const configPart = {
+    responseMimeType: "application/json",
+    responseSchema: analysisResponseSchema,
+  };
+
   return retryWithBackoff(async () => {
     try {
+      // 1. Try Gemini 3 Pro Preview (Best Quality)
+      console.log("Attempting analysis with gemini-3-pro-preview...");
       const response = await ai.models.generateContent({
-        model: "gemini-3-pro-preview", // Switched to Pro for better accuracy (e.g., reading zero sugar labels)
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                data: base64Image,
-                mimeType: mimeType,
-              },
-            },
-            {
-              text: "Проанализируй это изображение еды. Если видишь упаковки или этикетки (например, 'Zero Sugar', 'Diet', '0 калорий'), обязательно учитывай это при расчете. Определи каждое блюдо или ингредиент, оцени их вес в граммах и рассчитай КБЖУ (Калории, Белки, Жиры, Углеводы). Укажи степень уверенности (confidence) для каждого продукта от 0.0 до 1.0. Будь максимально точным. Верни результат в формате JSON. Используй русский язык для названий и описания.",
-            },
-          ],
-        },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: analysisResponseSchema,
-        },
+        model: "gemini-3-pro-preview",
+        contents: contentPart,
+        config: configPart,
       });
 
       const text = response.text;
       if (!text) throw new Error("No response from Gemini");
       
       return JSON.parse(text) as AnalysisResult;
+
     } catch (error: any) {
-      console.error("Analysis failed:", error);
-      throw new Error(error.message || "Failed to analyze image");
+      console.warn("Gemini 3 Pro failed:", error.message || error.status);
+
+      // 2. Fallback to Gemini 2.5 Flash if Pro is denied (403) or not found (404)
+      if (error.status === 403 || error.status === 404 || error.message?.includes('403') || error.message?.includes('404') || error.message?.includes('PERMISSION_DENIED')) {
+        console.log("Falling back to gemini-2.5-flash...");
+        
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: contentPart,
+          config: configPart,
+        });
+
+        const text = response.text;
+        if (!text) throw new Error("No response from Gemini (Flash fallback)");
+        
+        return JSON.parse(text) as AnalysisResult;
+      }
+
+      // If it's another error (like 500 or network), rethrow to let retryWithBackoff handle it or fail
+      throw error;
     }
   });
 };
@@ -174,7 +203,7 @@ export const recalculateMacros = async (
       `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash", // Switched to Flash to avoid 429 on updates
+        model: "gemini-2.5-flash", 
         contents: prompt,
         config: {
           responseMimeType: "application/json",
