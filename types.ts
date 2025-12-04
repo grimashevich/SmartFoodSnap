@@ -16,6 +16,7 @@ export interface AnalysisResult {
   items: FoodItem[];
   total: MacroData;
   summary: string;
+  modelUsed?: string;
 }
 
 export enum AppState {

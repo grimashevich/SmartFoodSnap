@@ -408,6 +408,13 @@ const App: React.FC = () => {
               Сканировать другое блюдо
             </button>
             
+            {/* Model Version Footer */}
+            <div className="text-center pt-6 pb-2 opacity-50">
+               <span className="text-[10px] font-mono tracking-wide" style={{ color: 'var(--tg-theme-hint-color, #9ca3af)' }}>
+                 Calculated by {analysisResult.modelUsed || 'Gemini AI'}
+               </span>
+            </div>
+
             {/* Spacing for fixed bottom bar */}
             <div className="h-20"></div>
           </div>

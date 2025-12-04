@@ -107,7 +107,9 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
       const text = response.text;
       if (!text) throw new Error("No response from Gemini");
       
-      return JSON.parse(text) as AnalysisResult;
+      const result = JSON.parse(text) as AnalysisResult;
+      result.modelUsed = "Gemini 3.0 Pro";
+      return result;
 
     } catch (error: any) {
       console.warn("Gemini 3 Pro failed:", error.message || error.status);
@@ -125,7 +127,9 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
         const text = response.text;
         if (!text) throw new Error("No response from Gemini (Flash fallback)");
         
-        return JSON.parse(text) as AnalysisResult;
+        const result = JSON.parse(text) as AnalysisResult;
+        result.modelUsed = "Gemini 2.5 Flash";
+        return result;
       }
 
       // If it's another error (like 500 or network), rethrow to let retryWithBackoff handle it or fail
@@ -176,7 +180,7 @@ export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
 };
 
 /**
- * Recalculates macros based on user correction (text) using Gemini 2.5 Flash.
+ * Recalculates macros based on user correction (text) using Gemini 3.0 Pro (or Flash if restricted).
  */
 export const recalculateMacros = async (
   currentAnalysis: AnalysisResult,
@@ -186,38 +190,58 @@ export const recalculateMacros = async (
     throw new Error("API Key is missing.");
   }
 
+  const prompt = `
+    Исходные данные анализа еды (JSON):
+    ${JSON.stringify(currentAnalysis)}
+
+    Корректировка от пользователя:
+    "${userCorrection}"
+
+    Задание:
+    1. Пойми, что именно пользователь хочет изменить (вес, название, удалить блюдо, добавить блюдо).
+    2. Пересчитай КБЖУ для измененных позиций и итоговую сумму.
+    3. Верни обновленный JSON объект в том же формате, включая поле confidence (для новых блюд оцени уверенность сам, для старых оставь или измени если нужно).
+    4. В поле 'summary' напиши, что было изменено.
+  `;
+  
+  const configPart = {
+    responseMimeType: "application/json",
+    responseSchema: analysisResponseSchema,
+  };
+
   return retryWithBackoff(async () => {
     try {
-      const prompt = `
-        Исходные данные анализа еды (JSON):
-        ${JSON.stringify(currentAnalysis)}
-
-        Корректировка от пользователя:
-        "${userCorrection}"
-
-        Задание:
-        1. Пойми, что именно пользователь хочет изменить (вес, название, удалить блюдо, добавить блюдо).
-        2. Пересчитай КБЖУ для измененных позиций и итоговую сумму.
-        3. Верни обновленный JSON объект в том же формате, включая поле confidence (для новых блюд оцени уверенность сам, для старых оставь или измени если нужно).
-        4. В поле 'summary' напиши, что было изменено.
-      `;
-
+      // Prefer Gemini 3 Pro for reasoning updates
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash", 
+        model: "gemini-3-pro-preview", 
         contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: analysisResponseSchema,
-        },
+        config: configPart,
       });
 
       const text = response.text;
       if (!text) throw new Error("No response from Gemini");
 
-      return JSON.parse(text) as AnalysisResult;
+      const result = JSON.parse(text) as AnalysisResult;
+      result.modelUsed = "Gemini 3.0 Pro";
+      return result;
+
     } catch (error: any) {
-      console.error("Recalculation failed:", error);
-      throw new Error(error.message || "Recalculation failed");
+       // Fallback for correction logic as well
+       if (error.status === 403 || error.status === 404 || error.message?.includes('403') || error.message?.includes('404')) {
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash", 
+          contents: prompt,
+          config: configPart,
+        });
+
+        const text = response.text;
+        if (!text) throw new Error("No response from Gemini");
+
+        const result = JSON.parse(text) as AnalysisResult;
+        result.modelUsed = "Gemini 2.5 Flash";
+        return result;
+       }
+       throw error;
     }
   });
 };
