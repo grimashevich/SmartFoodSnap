@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Send, ChevronRight, Edit3, ArrowLeft, Leaf, Flame, Activity, Camera } from 'lucide-react';
+import { Loader2, Send, ChevronRight, Edit3, ArrowLeft, Leaf, Flame, Activity, Camera, Bug } from 'lucide-react';
 import CameraCapture from './components/CameraCapture';
 import NutritionChart from './components/NutritionChart';
 import AudioRecorder from './components/AudioRecorder';
@@ -14,9 +14,16 @@ const App: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
   const [isTelegram, setIsTelegram] = useState(false);
+  const [isDebugMode, setIsDebugMode] = useState(false);
 
-  // Initialize Telegram Web App
+  // Initialize Telegram Web App and check for Debug Mode
   useEffect(() => {
+    // Check for debug param in URL
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('debug') === 'true') {
+      setIsDebugMode(true);
+    }
+
     if (window.Telegram?.WebApp) {
       const tg = window.Telegram.WebApp;
       tg.ready();
@@ -95,6 +102,11 @@ const App: React.FC = () => {
 
   // Helper to translate technical errors to user-friendly messages
   const getUserFriendlyError = (error: any): string => {
+    // If Debug Mode is on, return the raw error
+    if (isDebugMode) {
+      return `[DEBUG] ${error?.message || JSON.stringify(error)}`;
+    }
+
     const msg = (error?.message || '').toLowerCase();
     
     // Check for rate limits (429) or quota issues
@@ -140,13 +152,24 @@ const App: React.FC = () => {
   };
 
   const handleCorrectionSubmit = async () => {
-    if (!correctionText.trim() || !analysisResult) return;
+    const text = correctionText.trim();
+    if (!text) return;
+
+    // Check for Debug Command
+    if (text === '/debug') {
+      setIsDebugMode(!isDebugMode);
+      setCorrectionText('');
+      setErrorMessage(isDebugMode ? "Режим отладки выключен" : "Режим отладки включен. Теперь вы будете видеть полные ошибки.");
+      return;
+    }
+
+    if (!analysisResult) return;
     
     setAppState(AppState.PROCESSING_CORRECTION);
     setLoadingMessage('Пересчитываю КБЖУ с учетом правок...');
     
     try {
-      const newResult = await recalculateMacros(analysisResult, correctionText);
+      const newResult = await recalculateMacros(analysisResult, text);
       setAnalysisResult(newResult);
       setCorrectionText('');
       setAppState(AppState.RESULT_VIEW);
@@ -197,7 +220,7 @@ const App: React.FC = () => {
 
   return (
     <div className={`min-h-screen flex flex-col max-w-md mx-auto shadow-2xl overflow-hidden relative ${isTelegram ? '' : 'bg-gray-50'}`} style={{ backgroundColor: 'var(--tg-theme-secondary-bg-color, #f8fafc)' }}>
-      {/* Header - Hide if in Telegram as we use native Back Button */}
+      {/* Header - Hide if in Telegram as we use native Back Button, but show Title/Debug */}
       {!isTelegram && (
         <header className={`${cardBgClass} px-6 py-4 shadow-sm z-30 sticky top-0 flex items-center justify-between`}>
           <div className="flex items-center gap-2">
@@ -205,6 +228,7 @@ const App: React.FC = () => {
               <Leaf className="w-5 h-5 text-white" />
             </div>
             <h1 className={`text-xl font-bold ${textMainClass} tracking-tight`}>NutriScan AI</h1>
+            {isDebugMode && <span className="text-[10px] bg-red-500 text-white px-1.5 rounded ml-1 font-mono">DBG</span>}
           </div>
           {appState !== AppState.IDLE && (
             <button onClick={resetApp} className={`text-sm ${textSubClass} hover:text-green-600 font-medium`}>
@@ -221,15 +245,17 @@ const App: React.FC = () => {
         {appState === AppState.IDLE && (
           <div className="flex flex-col h-full justify-center space-y-8 animate-fade-in pt-8">
              {isTelegram && (
-               <div className="flex justify-center mb-4">
+               <div className="flex justify-center mb-4 relative">
                   <div className="bg-green-500 p-4 rounded-2xl shadow-lg">
                     <Leaf className="w-10 h-10 text-white" />
                   </div>
+                  {isDebugMode && <div className="absolute top-0 right-1/3 bg-red-500 w-3 h-3 rounded-full border-2 border-white"></div>}
                </div>
              )}
             <div className="text-center space-y-2">
               <h2 className={`text-2xl font-bold ${textMainClass}`}>Что у нас на тарелке?</h2>
               <p className={textSubClass}>Загрузите фото еды, чтобы узнать калорийность и баланс макронутриентов.</p>
+              {isDebugMode && <p className="text-xs text-red-500 font-mono">DEBUG MODE ACTIVE</p>}
             </div>
             <CameraCapture onImageSelected={handleImageSelect} />
             
@@ -274,7 +300,7 @@ const App: React.FC = () => {
               <span className="text-4xl">😕</span>
             </div>
             <h3 className={`text-lg font-bold ${textMainClass}`}>Упс, что-то пошло не так</h3>
-            <p className={`${textSubClass} max-w-xs break-words px-4`}>{errorMessage}</p>
+            <p className={`${textSubClass} max-w-xs break-words px-4 text-sm whitespace-pre-wrap font-mono`}>{errorMessage}</p>
             <button 
               onClick={resetApp}
               className="px-6 py-2 bg-gray-800 text-white rounded-lg shadow-lg hover:bg-gray-700 transition"
@@ -306,6 +332,7 @@ const App: React.FC = () => {
                 <span className="text-white font-medium text-sm bg-black/30 backdrop-blur-md px-3 py-1 rounded-full">
                   Анализ завершен
                 </span>
+                {isDebugMode && <span className="ml-2 text-white font-mono text-xs bg-red-600 px-2 py-1 rounded">DEBUG</span>}
               </div>
             </div>
 
@@ -387,7 +414,7 @@ const App: React.FC = () => {
       {(appState === AppState.RESULT_VIEW || appState === AppState.PROCESSING_CORRECTION) && analysisResult && (
         <div className={`absolute bottom-0 left-0 right-0 border-t border-gray-100 p-4 shadow-lg z-40 backdrop-blur-lg bg-opacity-95 ${cardBgClass}`} style={{ backgroundColor: isTelegram ? 'var(--tg-theme-bg-color)' : 'rgba(255,255,255,0.95)' }}>
            {errorMessage && (
-             <div className="absolute -top-12 left-4 right-4 bg-red-500 text-white text-xs p-2 rounded-lg text-center animate-bounce">
+             <div className="absolute -top-12 left-4 right-4 bg-red-500 text-white text-xs p-2 rounded-lg text-center animate-bounce font-mono">
                {errorMessage}
              </div>
            )}
@@ -401,7 +428,7 @@ const App: React.FC = () => {
                 type="text"
                 value={correctionText}
                 onChange={(e) => setCorrectionText(e.target.value)}
-                placeholder="Исправить (напр: 'риса 200г')"
+                placeholder={isDebugMode ? "Команда (/debug выкл)" : "Исправить (напр: 'риса 200г')"}
                 disabled={appState === AppState.PROCESSING_CORRECTION}
                 className="w-full pl-4 pr-10 py-3 bg-gray-100 rounded-full text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500 transition-all disabled:opacity-50"
                 onKeyDown={(e) => e.key === 'Enter' && handleCorrectionSubmit()}
@@ -418,7 +445,7 @@ const App: React.FC = () => {
             </div>
           </div>
           <p className={`text-[10px] text-center mt-2 ${textSubClass}`}>
-            Зажмите микрофон или напишите текст для уточнения веса или состава.
+            {isDebugMode ? "РЕЖИМ ОТЛАДКИ АКТИВЕН" : "Зажмите микрофон или напишите текст для уточнения веса или состава."}
           </p>
         </div>
       )}
