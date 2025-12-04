@@ -139,6 +139,44 @@ export const analyzeFoodImage = async (base64Image: string, mimeType: string): P
 };
 
 /**
+ * Analyzes text description of food to estimate macros.
+ */
+export const analyzeFoodText = async (text: string): Promise<AnalysisResult> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing.");
+  }
+
+  const prompt = `
+    Проанализируй этот текст: "${text}".
+    Пользователь описывает, что он съел.
+    Определи список блюд/продуктов, их вес (если не указан, оцени среднюю порцию) и рассчитай КБЖУ.
+    Верни результат в формате JSON, используя ту же структуру, что и для анализа фото.
+    Используй русский язык.
+  `;
+
+  const configPart = {
+    responseMimeType: "application/json",
+    responseSchema: analysisResponseSchema,
+  };
+
+  return retryWithBackoff(async () => {
+      // Use Flash for text analysis as it's faster and sufficient for text-to-json
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: configPart,
+      });
+
+      const txt = response.text;
+      if (!txt) throw new Error("No response from Gemini");
+
+      const result = JSON.parse(txt) as AnalysisResult;
+      result.modelUsed = "Gemini 2.5 Flash (Text)";
+      return result;
+  });
+};
+
+/**
  * Transcribes audio using Gemini 2.5 Flash for fast speech-to-text.
  */
 export const transcribeAudio = async (audioBlob: Blob): Promise<string> => {

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Send, ChevronRight, Edit3, ArrowLeft, Leaf, Flame, Activity, Camera, Bug } from 'lucide-react';
+import { Loader2, Send, ChevronRight, Edit3, ArrowLeft, Leaf, Flame, Activity, Camera, Bug, Info } from 'lucide-react';
 import CameraCapture from './components/CameraCapture';
 import NutritionChart from './components/NutritionChart';
 import AudioRecorder from './components/AudioRecorder';
-import { analyzeFoodImage, recalculateMacros, transcribeAudio } from './services/geminiService';
+import { analyzeFoodImage, recalculateMacros, transcribeAudio, analyzeFoodText } from './services/geminiService';
 import { AnalysisResult, AppState } from './types';
 
 const App: React.FC = () => {
@@ -11,6 +11,7 @@ const App: React.FC = () => {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [correctionText, setCorrectionText] = useState('');
+  const [homeInputText, setHomeInputText] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [rawError, setRawError] = useState<string | null>(null);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
@@ -34,6 +35,7 @@ const App: React.FC = () => {
     setSelectedImage(null);
     setAnalysisResult(null);
     setCorrectionText('');
+    setHomeInputText('');
     setErrorMessage(null);
     setRawError(null);
   }, []);
@@ -148,6 +150,44 @@ const App: React.FC = () => {
     }
   };
 
+  const handleHomeTextSubmit = async () => {
+    const text = homeInputText.trim();
+    if (!text) return;
+
+    setAppState(AppState.ANALYZING_IMAGE);
+    setLoadingMessage('Анализирую описание еды...');
+    setErrorMessage(null);
+    setRawError(null);
+
+    try {
+        const result = await analyzeFoodText(text);
+        setAnalysisResult(result);
+        setSelectedImage(null); // No image for text analysis
+        setAppState(AppState.RESULT_VIEW);
+        setHomeInputText(''); 
+    } catch (error: any) {
+        setRawError(error.message || JSON.stringify(error));
+        setErrorMessage(getUserFriendlyError(error));
+        setAppState(AppState.ERROR);
+    }
+  };
+
+  const handleHomeAudio = async (blob: Blob) => {
+    setAppState(AppState.ANALYZING_IMAGE);
+    setLoadingMessage('Распознаю голос...');
+    setErrorMessage(null);
+    
+    try {
+        const text = await transcribeAudio(blob);
+        setHomeInputText(text);
+        setAppState(AppState.IDLE);
+    } catch (error: any) {
+         setRawError(error.message || JSON.stringify(error));
+         setErrorMessage(getUserFriendlyError(error));
+         setAppState(AppState.ERROR);
+    }
+  }
+
   const handleCorrectionSubmit = async () => {
     const text = correctionText.trim();
     if (!text) return;
@@ -237,7 +277,7 @@ const App: React.FC = () => {
         
         {/* State: IDLE */}
         {appState === AppState.IDLE && (
-          <div className="flex flex-col h-full justify-center space-y-8 animate-fade-in pt-8">
+          <div className="flex flex-col h-full justify-center space-y-6 animate-fade-in pt-8">
              {isTelegram && (
                <div className="flex justify-center mb-4 relative">
                   <div className="bg-green-500 p-4 rounded-2xl shadow-lg">
@@ -247,9 +287,42 @@ const App: React.FC = () => {
              )}
             <div className="text-center space-y-2">
               <h2 className={`text-2xl font-bold ${textMainClass}`}>Что у нас на тарелке?</h2>
-              <p className={textSubClass}>Загрузите фото еды, чтобы узнать калорийность и баланс макронутриентов.</p>
+              <p className={textSubClass}>Загрузите фото еды или опишите её, чтобы узнать КБЖУ.</p>
             </div>
+            
             <CameraCapture onImageSelected={handleImageSelect} />
+
+            {/* NEW HOME PAGE INPUT */}
+            <div>
+              <div className={`${cardBgClass} p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-3 transition-shadow hover:shadow-md`}>
+                  <AudioRecorder onRecordingComplete={handleHomeAudio} isProcessing={false} />
+                  <div className="flex-1 relative">
+                     <input
+                       type="text"
+                       value={homeInputText}
+                       onChange={(e) => setHomeInputText(e.target.value)}
+                       onKeyDown={(e) => e.key === 'Enter' && handleHomeTextSubmit()}
+                       placeholder="Опишите всё, что вы съели (напр. Борщ 300г, хлеб...)"
+                       className="w-full pl-4 pr-10 py-3 bg-gray-100 rounded-xl text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500 transition-all"
+                     />
+                     {homeInputText.trim().length > 0 && (
+                        <button
+                          onClick={handleHomeTextSubmit}
+                          className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1.5 bg-green-500 text-white rounded-lg hover:bg-green-600 transition"
+                        >
+                          <Send className="w-4 h-4" />
+                        </button>
+                     )}
+                  </div>
+              </div>
+              
+              <div className="flex gap-2 mt-3 px-2">
+                 <Info className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                 <p className={`text-xs ${textSubClass} leading-relaxed`}>
+                   Сфотографируйте еду или перечислите всё, что съели. Для точности указывайте примерный вес (в граммах) или количество (шт, ложки, тарелки и.т.д.).
+                 </p>
+              </div>
+            </div>
             
             <div className="grid grid-cols-2 gap-4">
               <div className={`${cardBgClass} p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center`}>
@@ -318,7 +391,7 @@ const App: React.FC = () => {
 
         {/* State: RESULT VIEW (and PROCESSING_CORRECTION via overlay) */}
         {(appState === AppState.RESULT_VIEW || appState === AppState.PROCESSING_CORRECTION) && analysisResult && (
-          <div className="space-y-6 animate-fade-in-up relative">
+          <div className="space-y-4 animate-fade-in-up relative">
             
             {/* Loading Overlay for Corrections */}
             {appState === AppState.PROCESSING_CORRECTION && (
@@ -330,15 +403,27 @@ const App: React.FC = () => {
                </div>
             )}
 
-            {/* Top Image Preview */}
-            <div className="relative h-48 rounded-xl overflow-hidden shadow-md">
-              <img src={selectedImage || ''} alt="Food" className="w-full h-full object-cover" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent flex items-end p-4">
-                <span className="text-white font-medium text-sm bg-black/30 backdrop-blur-md px-3 py-1 rounded-full">
-                  Анализ завершен
-                </span>
+            {/* Top Image Preview (Only if image exists) */}
+            {selectedImage && (
+              <div className="relative h-48 rounded-xl overflow-hidden shadow-md">
+                <img src={selectedImage} alt="Food" className="w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent flex items-end p-4">
+                  <span className="text-white font-medium text-sm bg-black/30 backdrop-blur-md px-3 py-1 rounded-full">
+                    Анализ завершен
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
+            
+            {/* If text only, show a header instead of image */}
+            {!selectedImage && (
+               <div className="bg-green-100 p-6 rounded-xl text-center shadow-inner">
+                  <div className="inline-block p-3 bg-white rounded-full mb-2 shadow-sm">
+                    <Edit3 className="w-6 h-6 text-green-600" />
+                  </div>
+                  <h3 className="text-green-800 font-semibold">Ручной ввод</h3>
+               </div>
+            )}
 
             {/* AI Summary */}
             <div className="bg-green-50 border border-green-100 p-4 rounded-xl text-sm text-green-900">
@@ -395,28 +480,27 @@ const App: React.FC = () => {
               </div>
             </div>
 
-             {/* New Scan Action */}
-            <button 
-              onClick={resetApp}
-              className={`w-full mt-6 py-3.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 shadow-sm border active:scale-95 ${
-                 isTelegram 
-                 ? 'bg-[var(--tg-theme-bg-color,white)] text-[var(--tg-theme-text-color,#374151)] border-[var(--tg-theme-hint-color,#e5e7eb)]' 
-                 : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              <Camera className="w-5 h-5" />
-              Сканировать другое блюдо
-            </button>
-            
-            {/* Model Version Footer */}
-            <div className="text-center pt-6 pb-2 opacity-50">
-               <span className="text-[10px] font-mono tracking-wide" style={{ color: 'var(--tg-theme-hint-color, #9ca3af)' }}>
-                 Calculated by {analysisResult.modelUsed || 'Gemini AI'}
-               </span>
+             {/* Footer Actions Group (Button + Version Text) */}
+             <div>
+               <button 
+                onClick={resetApp}
+                className={`w-full py-3.5 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 shadow-sm border active:scale-95 ${
+                   isTelegram 
+                   ? 'bg-[var(--tg-theme-bg-color,white)] text-[var(--tg-theme-text-color,#374151)] border-[var(--tg-theme-hint-color,#e5e7eb)]' 
+                   : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <Camera className="w-5 h-5" />
+                Сканировать другое блюдо
+              </button>
+              
+              <div className="text-center mt-2 mb-6 opacity-50">
+                 <span className="text-[10px] font-mono tracking-wide" style={{ color: 'var(--tg-theme-hint-color, #9ca3af)' }}>
+                   Calculated by {analysisResult.modelUsed || 'Gemini AI'}
+                 </span>
+              </div>
             </div>
 
-            {/* Spacing for fixed bottom bar */}
-            <div className="h-20"></div>
           </div>
         )}
       </main>
